@@ -1,10 +1,12 @@
+// +build functional
+
 package hcsshimtest
 
 import (
 	"os"
 	"testing"
 
-	"github.com/microsoft/hcsshim"
+	"github.com/Microsoft/hcsshim"
 )
 
 const (
