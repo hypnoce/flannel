@@ -27,7 +27,7 @@ import (
 	"github.com/coreos/flannel/pkg/ip"
 	"github.com/coreos/flannel/subnet"
 	"github.com/golang/glog"
-	netsh "github.com/rakelkar/gonetsh/netsh"
+	"github.com/rakelkar/gonetsh/netsh"
 	"golang.org/x/net/context"
 	"k8s.io/apimachinery/pkg/util/json"
 )
@@ -157,21 +157,6 @@ func (be *HostgwBackend) RegisterNetwork(ctx context.Context, wg sync.WaitGroup,
 		hnsNetwork = newHnsNetwork
 		networkId = hnsNetwork.Id
 		glog.Infof("Created HNS network [%v] as %+v", backendConfig.networkName, hnsNetwork)
-		//Wait for the network to populate Management IP
-		for len(hnsNetwork.ManagementIP) == 0 {
-			time.Sleep(1 * time.Second)
-			hnsNetwork, err = hcsshim.HNSNetworkRequest("GET", networkId, "")
-			glog.Infof("HnsNetwork[%v]", hnsNetwork)
-		}
-
-		//Wait for the interface with the management IP
-		for {
-			if _, err = netHelper.GetInterfaceByIP(hnsNetwork.ManagementIP); err != nil {
-				time.Sleep(1 * time.Second)
-				continue
-			}
-			break
-		}
 	}
 
 	// now ensure there is a 1.2 endpoint on this network in the host compartment
@@ -212,6 +197,32 @@ func (be *HostgwBackend) RegisterNetwork(ctx context.Context, wg sync.WaitGroup,
 		return nil, fmt.Errorf("unable to hot attach bridge endpoint [%v] to host compartment, error: %v", bridgeEndpointName, err)
 	}
 	glog.Infof("Attached bridge endpoint [%v] to host", bridgeEndpointName)
+
+	// Now we should check management ip.
+	// Wait for the network to populate Management IP.
+	for {
+		hnsNetwork, err = hcsshim.GetHNSNetworkByName(backendConfig.networkName)
+		if err != nil {
+			return nil, fmt.Errorf("unable to get hns network %s after creation, error: %v", backendConfig.networkName, err)
+		}
+
+		if len(hnsNetwork.ManagementIP) > 0 {
+			glog.Infof("Got managementIP %s", hnsNetwork.ManagementIP)
+			break
+		}
+		time.Sleep(1 * time.Second)
+		glog.Infof("Checking ManagementIP with HnsNetwork[%v]", hnsNetwork)
+	}
+
+	//Wait for the interface with the management IP
+	for {
+		if _, err = netHelper.GetInterfaceByIP(hnsNetwork.ManagementIP); err != nil {
+			time.Sleep(1 * time.Second)
+			glog.Infof("Checking interface with ip %s, err %v", hnsNetwork.ManagementIP, err)
+			continue
+		}
+		break
+	}
 
 	// enable forwarding on the host interface and endpoint
 	for _, interfaceIpAddress := range []string{hnsNetwork.ManagementIP, endpointToAttach.IPAddress.String()} {
